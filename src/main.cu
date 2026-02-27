@@ -12,7 +12,7 @@
 
 int main(int argc, char** argv)
 {
-    std::vector<int> sizes = {1024, 2048, 4096, 8192};
+    std::vector<int> sizes = {1024, 2048, 4096, 8192, 16384};
     std::vector<BenchmarkResult> results;
 
     __half alpha = __float2half(1.0f);
@@ -21,16 +21,12 @@ int main(int argc, char** argv)
     cublasHandle_t handle;
     CHECK_CUBLAS(cublasCreate(&handle));
 
-    // Autotune both kernels once before the benchmark loop
-    printf("========================================\n");
-    printf("Autotuning 01_WMMABlockTiling\n");
-    printf("========================================\n");
-    RunAutotune<WMMABlockTilingTag>(GetWMMAVariants<WMMABlockTiling>());
+    // // Autotune both kernels once before the benchmark loop
+    // printf("Autotuning 01_WMMABlockTiling\n");
+    // RunAutotune<WMMABlockTilingTag>(GetWMMAVariants<WMMABlockTiling>());
 
-    printf("========================================\n");
-    printf("Autotuning 02_WMMAVectorized\n");
-    printf("========================================\n");
-    RunAutotune<WMMAVectorizedTag>(GetWMMAVectorizedVariants<WMMAVectorized>());
+    // printf("Autotuning 02_WMMAVectorized\n");
+    // RunAutotune<WMMAVectorizedTag>(GetWMMAVectorizedVariants<WMMAVectorized>());
 
     for (int N : sizes) {
         int M = N, K = N;
@@ -55,15 +51,15 @@ int main(int argc, char** argv)
         results.push_back(RunCuBLASBenchmark<HGEMMCuBLAS>(
             "00_cuBLAS", handle, M, N, K, alpha, d_A, d_B, beta, d_C));
 
-        // 01: Autotuned WMMABlockTiling
+        // 01: WMMABlockTiling
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
-        results.push_back(RunBenchmark<Autotuned<WMMABlockTilingTag>>(
-            "01_WMMABlockTiling_Autotuned", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+        results.push_back(RunBenchmark<WMMABlockTiling<128, 128, 16, 32, 32>>(
+            "01_WMMABlockTiling", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        // 02: Autotuned WMMAVectorized
+        // 02: WMMAVectorized
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
-        results.push_back(RunBenchmark<Autotuned<WMMAVectorizedTag>>(
-            "02_WMMAVectorized_Autotuned", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+        results.push_back(RunBenchmark<WMMAVectorized<128, 128, 32, 64, 64>>(
+            "02_WMMAVectorized", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));
         CHECK_CUDA(cudaFree(d_B));

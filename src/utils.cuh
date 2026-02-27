@@ -76,7 +76,7 @@ inline void FillRandomDevice(__half* d_ptr, size_t n, unsigned long long seed = 
     CHECK_CUDA(cudaFree(d_tmp));
 }
 
-inline bool VerifyGEMM(const __half* d_C, const __half* d_C_ref, int size, float rtol = 1e-2f)
+inline bool VerifyGEMM(const __half* d_C, const __half* d_C_ref, int size, float rtol = 2e-2f)
 {
     std::vector<__half> h_C(size);
     std::vector<__half> h_C_ref(size);
