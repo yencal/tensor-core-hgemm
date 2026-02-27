@@ -30,7 +30,7 @@ int main(int argc, char** argv)
     printf("========================================\n");
     printf("Autotuning 02_WMMAVectorized\n");
     printf("========================================\n");
-    RunAutotune<WMMAVectorizedTag>(GetWMMAVariants<WMMAVectorized>());
+    RunAutotune<WMMAVectorizedTag>(GetWMMAVectorizedVariants<WMMAVectorized>());
 
     for (int N : sizes) {
         int M = N, K = N;

@@ -51,6 +51,21 @@ inline std::vector<TuneConfig> GetWMMAVariants() {
     };
 }
 
+// For vectorized kernel: need (BM*BK)/8 >= NUM_THREADS and divisible
+template<template<int, int, int, int, int> class Kernel>
+inline std::vector<TuneConfig> GetWMMAVectorizedVariants() {
+    return {
+        // These all satisfy: (BM*BK)/8 % NUM_THREADS == 0
+        TUNE_CONFIG(Kernel, 128, 128, 32, 32, 32),  // 512 threads, 512 vecs
+        TUNE_CONFIG(Kernel, 128, 128, 64, 32, 32),  // 512 threads, 1024 vecs
+        TUNE_CONFIG(Kernel, 128, 256, 32, 32, 64),  // 512 threads, 512 vecs
+        TUNE_CONFIG(Kernel, 256, 128, 32, 64, 32),  // 512 threads, 1024 vecs
+        TUNE_CONFIG(Kernel, 128, 128, 32, 64, 64),  // 128 threads, 512 vecs
+        TUNE_CONFIG(Kernel, 64,  128, 64, 32, 32),  // 256 threads, 512 vecs
+        TUNE_CONFIG(Kernel, 128, 64,  64, 32, 32),  // 256 threads, 1024 vecs
+    };
+}
+
 inline TuneConfig Autotune(
     const std::vector<TuneConfig>& variants,
     int M, int N, int K, __half alpha,
