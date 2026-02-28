@@ -62,26 +62,20 @@ __global__ void wmma_async(
         __pipeline_wait_prior(0);
         __syncthreads();
 
-    for (int tileK = 0; tileK < K; tileK += BK) {
-        // Scalar loads
-        loadTileA_scalar<BM, BK, NUM_THREADS>(A, As, K, tid);
-        loadTileB_scalar<BK, BN, NUM_THREADS>(B, Bs, N, tid);
-        __syncthreads();
-
         #pragma unroll
         for (int innerK = 0; innerK < BK; innerK += MMA_K) {
-            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K,
+            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, 
                 __half, wmma::row_major> a_frag[MMA_M_TILES];
-            
+
             #pragma unroll
             for (int m = 0; m < MMA_M_TILES; ++m) {
                 const __half *As_ptr = &As[(warpM * WM + m * MMA_M) * BK + innerK];
                 wmma::load_matrix_sync(a_frag[m], As_ptr, BK);
             }
 
-            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K,
+            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, 
                 __half, wmma::row_major> b_frag[MMA_N_TILES];
-            
+
             #pragma unroll
             for (int n = 0; n < MMA_N_TILES; ++n) {
                 const __half *Bs_ptr = &Bs[innerK * BN + warpN * WN + n * MMA_N];
