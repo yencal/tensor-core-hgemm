@@ -9,6 +9,7 @@
 #include "01_wmma_block_tiling.cuh"
 #include "02_wmma_vectorized.cuh"
 #include "03_wmma_async_copy.cuh"
+#include "04_multistage.cuh"
 #include "autotune.cuh"
 
 int main(int argc, char** argv)
@@ -29,8 +30,11 @@ int main(int argc, char** argv)
     // printf("Autotuning 02_WMMAVectorized\n");
     // RunAutotune<WMMAVectorizedTag>(GetWMMAVectorizedVariants<WMMAVectorized>());
 
-    printf("Autotuning 03_WMMAAsync\n");
-    RunAutotune<WMMAAsyncTag>(GetWMMAVectorizedVariants<WMMAAsync>());
+    // printf("Autotuning 03_WMMAAsync\n");
+    // RunAutotune<WMMAAsyncTag>(GetWMMAVectorizedVariants<WMMAAsync>());
+
+    printf("Autotuning 04_WMMAMultistage\n");
+    RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
 
     for (int N : sizes) {
         int M = N, K = N;

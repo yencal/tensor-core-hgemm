@@ -14,6 +14,7 @@
 #include "01_wmma_block_tiling.cuh"
 #include "02_wmma_vectorized.cuh"
 #include "03_wmma_async_copy.cuh"
+#include "04_multistage.cuh"
 
 struct TuneConfig {
     const char* name;
@@ -23,6 +24,7 @@ struct TuneConfig {
 struct WMMABlockTilingTag {};
 struct WMMAVectorizedTag {};
 struct WMMAAsyncTag {};
+struct WMMAMultistageTag {};
 
 template<typename Tag>
 struct Autotuned {
@@ -37,6 +39,10 @@ struct Autotuned {
 
 #define TUNE_CONFIG(Kernel, BM, BN, BK, WM, WN) \
     TuneConfig{#BM "x" #BN "x" #BK "_" #WM "x" #WN, Kernel<BM, BN, BK, WM, WN>::Run}
+
+#define TUNE_CONFIG_MULTISTAGE(Kernel, BM, BN, BK, WM, WN, STAGES) \
+    TuneConfig{#BM "x" #BN "x" #BK "_" #WM "x" #WN "_S" #STAGES, \
+               Kernel<BM, BN, BK, WM, WN, STAGES>::Run}
 
 template<template<int, int, int, int, int> class Kernel>
 inline std::vector<TuneConfig> GetWMMAVariants() {
@@ -65,6 +71,23 @@ inline std::vector<TuneConfig> GetWMMAVectorizedVariants() {
         TUNE_CONFIG(Kernel, 128, 128, 32, 64, 64),  // 128 threads, 512 vecs
         TUNE_CONFIG(Kernel, 64,  128, 64, 32, 32),  // 256 threads, 512 vecs
         TUNE_CONFIG(Kernel, 128, 64,  64, 32, 32),  // 256 threads, 1024 vecs
+    };
+}
+
+// For multistage
+template<template<int, int, int, int, int, int> class Kernel>
+inline std::vector<TuneConfig> GetWMMAMultistageVariants() {
+    return {
+        // 2-stage
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 2),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 64, 64, 64, 2),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 256, 32, 64, 64, 2),
+        // 3-stage
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 3),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 64, 64, 64, 3),
+        // 4-stage
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 4),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 4),
     };
 }
 
