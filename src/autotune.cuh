@@ -78,17 +78,16 @@ inline std::vector<TuneConfig> GetWMMAVectorizedVariants() {
 template<template<int, int, int, int, int, int> class Kernel>
 inline std::vector<TuneConfig> GetWMMAMultistageVariants() {
     return {
+        // sm_80 (A100): 48KB shared mem, STAGES * BK <= 96
         // 2-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 2),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 64, 64, 64, 2),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 256, 32, 64, 64, 2),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 2), 
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 2), 
         // 3-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 3),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 64, 64, 64, 3),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 3), 
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 3), 
         // 4-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 4),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 4),
-    };
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 16, 64, 64, 4), 
+    };  
 }
 
 inline TuneConfig Autotune(

@@ -33,8 +33,8 @@ int main(int argc, char** argv)
     // printf("Autotuning 03_WMMAAsync\n");
     // RunAutotune<WMMAAsyncTag>(GetWMMAVectorizedVariants<WMMAAsync>());
 
-    printf("Autotuning 04_WMMAMultistage\n");
-    RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
+    // printf("Autotuning 04_WMMAMultistage\n");
+    // RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
 
     for (int N : sizes) {
         int M = N, K = N;
@@ -69,10 +69,15 @@ int main(int argc, char** argv)
         results.push_back(RunBenchmark<WMMAVectorized<128, 128, 32, 64, 64>>(
             "02_WMMAVectorized", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        // 02: WMMAAsync
+        // 03: WMMAAsync
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
         results.push_back(RunBenchmark<WMMAAsync<128, 128, 32, 64, 64>>(
             "03_WMMAAsync", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+
+        // 04: WMMAMultistage
+        CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<WMMAMultistage<128, 128, 16, 64, 64, 4>>(
+            "04_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));
         CHECK_CUDA(cudaFree(d_B));
