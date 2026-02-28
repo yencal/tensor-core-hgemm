@@ -9,6 +9,7 @@
 #include "01_wmma_block_tiling.cuh"
 #include "02_wmma_vectorized.cuh"
 #include "03_wmma_async_copy.cuh"
+#include "04_padded.cuh"
 #include "04_multistage.cuh"
 #include "autotune.cuh"
 
@@ -74,10 +75,10 @@ int main(int argc, char** argv)
         results.push_back(RunBenchmark<WMMAAsync<128, 128, 32, 64, 64>>(
             "03_WMMAAsync", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        // 04: WMMAMultistage
+        // 04: WMMAPadded
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
-        results.push_back(RunBenchmark<WMMAMultistage<128, 128, 16, 64, 64, 4>>(
-            "04_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+        results.push_back(RunBenchmark<WMMAPadded<128, 128, 16, 64, 64, 4>>(
+            "04_WMMAPadded", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));
         CHECK_CUDA(cudaFree(d_B));

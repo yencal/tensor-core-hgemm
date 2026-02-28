@@ -157,6 +157,62 @@ __device__ void loadTileB_async(
 }
 
 // =========================================================================
+// Padded tile loading (async)
+// =========================================================================
+
+template <int BM, int BK, int A_STRIDE, int NUM_THREADS>
+__device__ void loadTileA_async_padded(
+    const __half *A,
+    __half *As,
+    int K,
+    uint tid)
+{
+    constexpr int TOTAL_VEC = (BM * BK) / 8;
+    constexpr int VEC_PER_THREAD = TOTAL_VEC / NUM_THREADS;
+
+    #pragma unroll
+    for (int i = 0; i < VEC_PER_THREAD; ++i) {
+        uint idx = tid + i * NUM_THREADS;
+        uint row = idx / (BK / 8);
+        uint col8 = idx % (BK / 8);
+        
+        // Load from global (no padding)
+        // Store to shared with padded stride
+        __pipeline_memcpy_async(
+            &As[row * A_STRIDE + col8 * 8],
+            &A[row * K + col8 * 8],
+            sizeof(float4)
+        );
+    }
+}
+
+template <int BK, int BN, int B_STRIDE, int NUM_THREADS>
+__device__ void loadTileB_async_padded(
+    const __half *B,
+    __half *Bs,
+    int N,
+    uint tid)
+{
+    constexpr int TOTAL_VEC = (BK * BN) / 8;
+    constexpr int VEC_PER_THREAD = TOTAL_VEC / NUM_THREADS;
+
+    #pragma unroll
+    for (int i = 0; i < VEC_PER_THREAD; ++i) {
+        uint idx = tid + i * NUM_THREADS;
+        uint row = idx / (BN / 8);
+        uint col8 = idx % (BN / 8);
+        
+        // Load from global (no padding)
+        // Store to shared with padded stride
+        __pipeline_memcpy_async(
+            &Bs[row * B_STRIDE + col8 * 8],
+            &B[row * N + col8 * 8],
+            sizeof(float4)
+        );
+    }
+}
+
+// =========================================================================
 // Epilogue: C = alpha * acc + beta * C (FP16 accumulator)
 // =========================================================================
 
