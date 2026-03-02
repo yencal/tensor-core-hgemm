@@ -229,7 +229,8 @@ void RunAndRecordAutotuned(
     __half beta, __half* C, const __half* C_ref)
 {
     CHECK_CUDA(cudaMemset(C, 0, M * N * sizeof(__half)));
-    std::string label = std::string(kernel_name) + " [" + Autotuned<Tag>::config.name + "]";
+    // std::string label = std::string(kernel_name) + " [" + Autotuned<Tag>::config.name + "]";
+    std::string label = std::string(kernel_name);
     results.push_back(RunBenchmark<Autotuned<Tag>>(
         label.c_str(), M, N, K, alpha, A, B, beta, C, C_ref));
 }
