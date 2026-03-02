@@ -11,6 +11,7 @@
 #include "03_wmma_async_copy.cuh"
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
+#include "06_wmma_multistage_dynsmem.cuh"
 #include "autotune.cuh"
 
 int main(int argc, char** argv)
@@ -39,6 +40,9 @@ int main(int argc, char** argv)
 
     // printf("Autotuning 05_WMMAMultistage\n");
     // RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
+
+    printf("Autotuning 06_WMMAMultistageDynSmem\n");
+    RunAutotune<WMMAMultistageDynSmemTag>(GetWMMADynSmemVariants<WMMAMultistageDynSmem>());
 
     for (int N : sizes) {
         int M = N, K = N;

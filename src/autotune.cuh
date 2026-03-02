@@ -16,6 +16,7 @@
 #include "03_wmma_async_copy.cuh"
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
+#include "06_wmma_multistage_dynsmem.cuh"
 
 struct TuneConfig {
     const char* name;
@@ -27,6 +28,7 @@ struct WMMAVectorizedTag {};
 struct WMMAAsyncTag {};
 struct WMMAPaddedTag {};
 struct WMMAMultistageTag {};
+struct WMMAMultistageDynSmemTag {};
 
 template<typename Tag>
 struct Autotuned {
@@ -44,6 +46,10 @@ struct Autotuned {
 
 #define TUNE_CONFIG_MULTISTAGE(Kernel, BM, BN, BK, WM, WN, STAGES) \
     TuneConfig{#BM "x" #BN "x" #BK "_" #WM "x" #WN "_S" #STAGES, \
+               Kernel<BM, BN, BK, WM, WN, STAGES>::Run}
+
+#define TUNE_CONFIG_DYNSMEM(Kernel, BM, BN, BK, WM, WN, STAGES) \
+    TuneConfig{#BM "x" #BN "x" #BK "_" #WM "x" #WN "_S" #STAGES "_dyn", \
                Kernel<BM, BN, BK, WM, WN, STAGES>::Run}
 
 template<template<int, int, int, int, int> class Kernel>
@@ -91,6 +97,16 @@ inline std::vector<TuneConfig> GetWMMAMultistageVariants() {
         TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 16, 64, 64, 4),
         TUNE_CONFIG_MULTISTAGE(Kernel, 64, 64, 32, 32, 32, 4),
     };  
+}
+
+template<template<int, int, int, int, int, int> class Kernel>
+inline std::vector<TuneConfig> GetWMMADynSmemVariants() {
+    return {
+        TUNE_CONFIG_DYNSMEM(Kernel, 128, 128, 32, 64, 64, 2),
+        TUNE_CONFIG_DYNSMEM(Kernel, 128, 128, 32, 64, 64, 3),
+        TUNE_CONFIG_DYNSMEM(Kernel, 128, 128, 32, 64, 64, 4),
+        TUNE_CONFIG_DYNSMEM(Kernel, 256, 128, 32, 64, 64, 3),
+    };
 }
 
 inline TuneConfig Autotune(
