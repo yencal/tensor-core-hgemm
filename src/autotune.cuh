@@ -16,6 +16,7 @@
 #include "03_wmma_async_copy.cuh"
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
+#include "06_wmma_double_buffer.cuh"
 #include "06_wmma_multistage_dynsmem.cuh"
 
 struct TuneConfig {
@@ -28,6 +29,7 @@ struct WMMAVectorizedTag {};
 struct WMMAAsyncTag {};
 struct WMMAPaddedTag {};
 struct WMMAMultistageTag {};
+struct WMMADoubleBufferTag {};
 struct WMMAMultistageDynSmemTag {};
 
 template<typename Tag>
