@@ -6,7 +6,7 @@
 //   - Dynamic shared memory (exceed 48KB limit)
 //   - Vectorized epilogue (reuse A/B smem for C)
 //   - Zig-zag MMA order (register reuse)
-//   - Block swizzling (L2 cache optimization)
+//   - Block swizzling (L2 cache optimization, NVIDIA/CUTLASS style)
 
 #pragma once
 
@@ -21,7 +21,8 @@ using namespace nvcuda;
 // =========================================================================
 // Main Kernel
 // =========================================================================
-template <int BM, int BN, int BK, int WM, int WN, int STAGES>
+template <int BM, int BN, int BK, int WM, int WN, int STAGES, 
+          bool USE_SWIZZLE = false, int GROUP_SIZE_M = 8>
 __global__ void wmma_final(
     int M, int N, int K, __half alpha, 
     const __half *A, const __half *B, __half beta, __half *C)
@@ -73,16 +74,29 @@ __global__ void wmma_final(
     const uint warpM = warpId / WARPS_N;
     const uint warpN = warpId % WARPS_N;
 
-    // Block swizzling for L2 cache optimization
-    // gridDim.x = BLOCK_STRIDE (columns per wave)
-    // gridDim.y = number of M tiles
-    // gridDim.z = number of waves
-    const uint blockM = (blockIdx.z % 2) 
-        ? (gridDim.y - blockIdx.y - 1)   // Odd wave: reverse row direction
-        : blockIdx.y;                     // Even wave: normal row direction
-    const uint blockN = blockIdx.z * gridDim.x + blockIdx.x;  // Actual column
+    // Block index calculation
+    uint blockM, blockN;
+    if constexpr (USE_SWIZZLE) {
+        // NVIDIA blog / CUTLASS style swizzle (GROUP_SIZE_M rows at a time)
+        // Uses 1D grid, computes 2D indices with grouping for L2 reuse of A tiles
+        const uint num_blocks_m = (M + BM - 1) / BM;
+        const uint num_blocks_n = (N + BN - 1) / BN;
+        const uint num_blocks_in_group = GROUP_SIZE_M * num_blocks_n;
+        
+        const uint bid = blockIdx.x;  // 1D block index
+        const uint group_id = bid / num_blocks_in_group;
+        const uint first_block_m = group_id * GROUP_SIZE_M;
+        const uint group_size_m = min(num_blocks_m - first_block_m, (uint)GROUP_SIZE_M);
+        
+        blockM = first_block_m + (bid % group_size_m);
+        blockN = (bid % num_blocks_in_group) / group_size_m;
+    } else {
+        // Simple 2D grid
+        blockM = blockIdx.y;
+        blockN = blockIdx.x;
+    }
 
-    // Early exit for out-of-bounds blocks (last wave may have extra blocks)
+    // Early exit for out-of-bounds blocks
     if (blockM * BM >= M || blockN * BN >= N) return;
 
     A += blockM * BM * K;
@@ -202,7 +216,8 @@ __global__ void wmma_final(
 // =========================================================================
 // Kernel Wrapper
 // =========================================================================
-template<int BM, int BN, int BK, int WM, int WN, int STAGES = 2>
+template<int BM, int BN, int BK, int WM, int WN, int STAGES = 2, 
+         bool USE_SWIZZLE = false, int GROUP_SIZE_M = 8>
 struct WMMAFinal {
     static constexpr int WARPS_M = BM / WM;
     static constexpr int WARPS_N = BN / WN;
@@ -213,9 +228,6 @@ struct WMMAFinal {
     static constexpr int B_STRIDE = BN + SMEM_PAD;
     static constexpr size_t SMEM_SIZE = STAGES * (BM * A_STRIDE + BK * B_STRIDE) * sizeof(__half);
 
-    // Block swizzling width (number of columns per wave)
-    static constexpr int BLOCK_STRIDE = 16;
-
     static void Run(int M, int N, int K, __half alpha,
                     const __half* A, const __half* B,
                     __half beta, __half* C) {
@@ -224,23 +236,28 @@ struct WMMAFinal {
         static bool configured = false;
         if (!configured) {
             cudaFuncSetAttribute(
-                wmma_final<BM, BN, BK, WM, WN, STAGES>,
+                wmma_final<BM, BN, BK, WM, WN, STAGES, USE_SWIZZLE, GROUP_SIZE_M>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 SMEM_SIZE
             );
             configured = true;
         }
 
-        // Grid dimensions with swizzling
         int numBlocksM = (M + BM - 1) / BM;
         int numBlocksN = (N + BN - 1) / BN;
-        int numWaves = (numBlocksN + BLOCK_STRIDE - 1) / BLOCK_STRIDE;
 
-        // 3D grid: (columns per wave, rows, waves)
-        dim3 grid(BLOCK_STRIDE, numBlocksM, numWaves);
         dim3 block(NUM_THREADS);
+        dim3 grid;
+
+        if constexpr (USE_SWIZZLE) {
+            // 1D grid for swizzled access
+            grid = dim3(numBlocksM * numBlocksN);
+        } else {
+            // 2D grid: (columns, rows)
+            grid = dim3(numBlocksN, numBlocksM);
+        }
         
-        wmma_final<BM, BN, BK, WM, WN, STAGES><<<grid, block, SMEM_SIZE>>>(
+        wmma_final<BM, BN, BK, WM, WN, STAGES, USE_SWIZZLE, GROUP_SIZE_M><<<grid, block, SMEM_SIZE>>>(
             M, N, K, alpha, A, B, beta, C);
     }
 
@@ -251,7 +268,11 @@ struct WMMAFinal {
         printf("  Stages:     %d\n", STAGES);
         printf("  Threads:    %d (%d warps)\n", NUM_THREADS, WARPS_M * WARPS_N);
         printf("  Shared mem: %.2f KB (dynamic)\n", SMEM_SIZE / 1024.0f);
-        printf("  Block swizzle stride: %d\n", BLOCK_STRIDE);
-        printf("  Optimizations: padding, multistage, double-buffer, vec4 epilogue, zig-zag MMA, block swizzle\n");
+        if constexpr (USE_SWIZZLE) {
+            printf("  Block swizzle: ON (GROUP_SIZE_M=%d)\n", GROUP_SIZE_M);
+        } else {
+            printf("  Block swizzle: OFF\n");
+        }
+        printf("  Optimizations: padding, multistage, double-buffer, vec4 epilogue, zig-zag MMA\n");
     }
 };
