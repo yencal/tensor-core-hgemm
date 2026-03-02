@@ -41,8 +41,8 @@ int main(int argc, char** argv)
     // printf("Autotuning 05_WMMAMultistage\n");
     // RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
 
-    printf("Autotuning 06_WMMAMultistageDynSmem\n");
-    RunAutotune<WMMAMultistageDynSmemTag>(GetWMMADynSmemVariants<WMMAMultistageDynSmem>());
+    // printf("Autotuning 06_WMMAMultistageDynSmem\n");
+    // RunAutotune<WMMAMultistageDynSmemTag>(GetWMMADynSmemVariants<WMMAMultistageDynSmem>());
 
     for (int N : sizes) {
         int M = N, K = N;
@@ -91,6 +91,11 @@ int main(int argc, char** argv)
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
         results.push_back(RunBenchmark<WMMAMultistage<128, 128, 32, 64, 64, 2>>(
             "05_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+
+        // 06: WMMAMultistageDynSmem
+        CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<WMMAMultistageDynSmem<128, 128, 32, 64, 64, 2>>(
+            "06_WMMAMultistageDynSmem", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));
         CHECK_CUDA(cudaFree(d_B));
