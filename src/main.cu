@@ -9,8 +9,8 @@
 #include "01_wmma_block_tiling.cuh"
 #include "02_wmma_vectorized.cuh"
 #include "03_wmma_async_copy.cuh"
-#include "04_padded.cuh"
-#include "04_multistage.cuh"
+#include "04_wmma_padded.cuh"
+#include "05_wmma_multistage.cuh"
 #include "autotune.cuh"
 
 int main(int argc, char** argv)
@@ -34,8 +34,11 @@ int main(int argc, char** argv)
     // printf("Autotuning 03_WMMAAsync\n");
     // RunAutotune<WMMAAsyncTag>(GetWMMAVectorizedVariants<WMMAAsync>());
 
-    // printf("Autotuning 04_WMMAMultistage\n");
-    // RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
+    printf("Autotuning 04_WMMAPadded\n");
+    RunAutotune<WMMAPaddedTag>(GetWMMAVectorizedVariants<WMMAPadded>());
+
+    printf("Autotuning 05_WMMAMultistage\n");
+    RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
 
     for (int N : sizes) {
         int M = N, K = N;
@@ -77,7 +80,7 @@ int main(int argc, char** argv)
 
         // 04: WMMAPadded
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
-        results.push_back(RunBenchmark<WMMAPadded<128, 128, 16, 64, 64, 4>>(
+        results.push_back(RunBenchmark<WMMAPadded<128, 128, 16, 64, 64>>(
             "04_WMMAPadded", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));

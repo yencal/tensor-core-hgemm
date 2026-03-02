@@ -1,5 +1,5 @@
-// 04_padded.cuh
-// WMMA HGEMM with async copy and padded shared memory to avoid bank conflicts
+// 04_multistage.cuh
+// WMMA HGEMM with multi-stage async pipeline
 
 #pragma once
 
@@ -11,8 +11,8 @@
 
 using namespace nvcuda;
 
-template <int BM, int BN, int BK, int WM, int WN>
-__global__ void wmma_padded(
+template <int BM, int BN, int BK, int WM, int WN, int STAGES>
+__global__ void wmma_multistage(
     int M, int N, int K, __half alpha, 
     const __half *A, const __half *B, __half beta, __half *C)
 {
@@ -61,33 +61,53 @@ __global__ void wmma_padded(
         for (int n = 0; n < MMA_N_TILES; ++n)
             wmma::fill_fragment(acc[m][n], __float2half(0.0f));
 
-    for (int tileK = 0; tileK < K; tileK += BK) {
-        // Load with padded strides
-        loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A, As, K, tid);
-        loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B, Bs, N, tid);
+    const int numTiles = K / BK;
+
+    // ====== PROLOGUE: fill the pipeline ======
+    const int prologueStages = min(STAGES - 1, numTiles);
+    #pragma unroll
+    for (int s = 0; s < prologueStages; ++s) {
+        loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + s * BK, As[s], K, tid);
+        loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B + s * BK * N, Bs[s], N, tid);
         __pipeline_commit();
-        __pipeline_wait_prior(0);
+    }
+
+    // ====== MAIN LOOP ======
+    int loadTile = STAGES - 1;
+
+    for (int tile = 0; tile < numTiles; ++tile) {
+        int computeStage = tile % STAGES;
+
+        // --- Async load: prefetch future tile ---
+        if (loadTile < numTiles) {
+            int loadStage = loadTile % STAGES;
+            loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + loadTile * BK, As[loadStage], K, tid);
+            loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B + loadTile * BK * N, Bs[loadStage], N, tid);
+            __pipeline_commit();
+            ++loadTile;
+        }
+
+        // Wait for compute stage (keeps STAGES-1 loads in flight)
+        __pipeline_wait_prior(STAGES - 1);
         __syncthreads();
 
+        // --- Compute: WMMA on current tile ---
         #pragma unroll
         for (int innerK = 0; innerK < BK; innerK += MMA_K) {
-            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, 
-                __half, wmma::row_major> a_frag[MMA_M_TILES];
+            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
+                a_frag[MMA_M_TILES];
+            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
+                b_frag[MMA_N_TILES];
 
             #pragma unroll
             for (int m = 0; m < MMA_M_TILES; ++m) {
-                // Use padded stride for indexing and load
-                const __half *As_ptr = &As[(warpM * WM + m * MMA_M) * A_STRIDE + innerK];
+                const __half *As_ptr = &As[computeStage][(warpM * WM + m * MMA_M) * A_STRIDE + innerK];
                 wmma::load_matrix_sync(a_frag[m], As_ptr, A_STRIDE);
             }
 
-            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, 
-                __half, wmma::row_major> b_frag[MMA_N_TILES];
-
             #pragma unroll
             for (int n = 0; n < MMA_N_TILES; ++n) {
-                // Use padded stride for indexing and load
-                const __half *Bs_ptr = &Bs[innerK * B_STRIDE + warpN * WN + n * MMA_N];
+                const __half *Bs_ptr = &Bs[computeStage][innerK * B_STRIDE + warpN * WN + n * MMA_N];
                 wmma::load_matrix_sync(b_frag[n], Bs_ptr, B_STRIDE);
             }
 
@@ -99,16 +119,14 @@ __global__ void wmma_padded(
         }
 
         __syncthreads();
-        A += BK;
-        B += BK * N;
     }
 
     epilogueAndStore<MMA_M, MMA_N, MMA_K, MMA_M_TILES, MMA_N_TILES, WM, WN>(
         acc, C, N, alpha, beta, warpM, warpN);
 }
 
-template<int BM, int BN, int BK, int WM, int WN>
-struct WMMAPadded {
+template<int BM, int BN, int BK, int WM, int WN, int STAGES = 2>
+struct WMMAMultistage {
     static constexpr int WARPS_M = BM / WM;
     static constexpr int WARPS_N = BN / WN;
     static constexpr int NUM_THREADS = WARPS_M * WARPS_N * 32;
@@ -118,14 +136,16 @@ struct WMMAPadded {
                     __half beta, __half* C) {
         dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
         dim3 block(NUM_THREADS);
-        wmma_padded<BM, BN, BK, WM, WN><<<grid, block>>>(
+        wmma_multistage<BM, BN, BK, WM, WN, STAGES><<<grid, block>>>(
             M, N, K, alpha, A, B, beta, C);
     }
 
     static void PrintConfig() {
-        printf("WMMAPadded<%d, %d, %d, %d, %d>\n", BM, BN, BK, WM, WN);
+        printf("WMMAMultistage<%d, %d, %d, %d, %d, %d>\n", BM, BN, BK, WM, WN, STAGES);
         printf("  Block tile: %dx%dx%d\n", BM, BN, BK);
         printf("  Warp tile:  %dx%d\n", WM, WN);
+        printf("  Stages:     %d\n", STAGES);
         printf("  Threads:    %d\n", NUM_THREADS);
     }
+
 };

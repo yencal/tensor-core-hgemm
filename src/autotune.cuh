@@ -14,7 +14,8 @@
 #include "01_wmma_block_tiling.cuh"
 #include "02_wmma_vectorized.cuh"
 #include "03_wmma_async_copy.cuh"
-#include "04_multistage.cuh"
+#include "04_wmma_padded.cuh"
+#include "05_wmma_multistage.cuh"
 
 struct TuneConfig {
     const char* name;
@@ -24,6 +25,7 @@ struct TuneConfig {
 struct WMMABlockTilingTag {};
 struct WMMAVectorizedTag {};
 struct WMMAAsyncTag {};
+struct WMMAPadded {};
 struct WMMAMultistageTag {};
 
 template<typename Tag>
