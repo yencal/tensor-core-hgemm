@@ -85,10 +85,11 @@ inline std::vector<TuneConfig> GetWMMAMultistageVariants() {
         TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 2), 
         TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 2), 
         // 3-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 3), 
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 3), 
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 64, 32, 64, 32, 3),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 64, 128, 32, 32, 64, 3),
         // 4-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 16, 64, 64, 4), 
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 16, 64, 64, 4),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 64, 64, 32, 32, 32, 4),
     };  
 }
 
