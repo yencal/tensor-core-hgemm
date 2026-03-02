@@ -1,6 +1,7 @@
-// 06_wmma_multistage_dynsmem.cuh
-// WMMA HGEMM with multi-stage async pipeline and dynamic shared memory
+// 07_wmma_dynsmem.cuh
+// WMMA HGEMM with all optimizations + dynamic shared memory
 // Allows exceeding 48KB static limit (A100 supports up to 164KB)
+// Includes: padding, multi-stage pipeline, fragment double buffering
 
 #pragma once
 
@@ -13,7 +14,7 @@
 using namespace nvcuda;
 
 template <int BM, int BN, int BK, int WM, int WN, int STAGES>
-__global__ void wmma_multistage_dynsmem(
+__global__ void wmma_dynsmem(
     int M, int N, int K, __half alpha, 
     const __half *A, const __half *B, __half beta, __half *C)
 {
@@ -58,6 +59,7 @@ __global__ void wmma_multistage_dynsmem(
     B += blockIdx.x * BN;
     C += blockIdx.y * BM * N + blockIdx.x * BN;
 
+    // Accumulators
     wmma::fragment<wmma::accumulator, MMA_M, MMA_N, MMA_K, __half> 
         acc[MMA_M_TILES][MMA_N_TILES];
 
@@ -67,12 +69,17 @@ __global__ void wmma_multistage_dynsmem(
         for (int n = 0; n < MMA_N_TILES; ++n)
             wmma::fill_fragment(acc[m][n], __float2half(0.0f));
 
+    // Double-buffered fragments
+    wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
+        a_frag[2][MMA_M_TILES];
+    wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
+        b_frag[2][MMA_N_TILES];
+
     const int numTiles = K / BK;
 
     // ====== PROLOGUE: fill the pipeline ======
-    const int prologueStages = min(STAGES - 1, numTiles);
     #pragma unroll
-    for (int s = 0; s < prologueStages; ++s) {
+    for (int s = 0; s < STAGES - 1 && s < numTiles; ++s) {
         __half* As_stage = As + s * A_STAGE_SIZE;
         __half* Bs_stage = Bs + s * B_STAGE_SIZE;
         loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + s * BK, As_stage, K, tid);
@@ -97,39 +104,59 @@ __global__ void wmma_multistage_dynsmem(
             ++loadTile;
         }
 
-        // Wait for compute stage (keeps STAGES-1 loads in flight)
+        // Wait for compute stage
         __pipeline_wait_prior(STAGES - 1);
         __syncthreads();
 
-        // Pointers to current compute stage
-        __half* As_compute = As + computeStage * A_STAGE_SIZE;
-        __half* Bs_compute = Bs + computeStage * B_STAGE_SIZE;
+        // Pointers to current tile in shared memory
+        const __half* As_tile = As + computeStage * A_STAGE_SIZE;
+        const __half* Bs_tile = Bs + computeStage * B_STAGE_SIZE;
 
-        // --- Compute: WMMA on current tile ---
+        // --- Fragment double buffering within this tile ---
+        int frag_load = 0;
+        int frag_compute = 1;
+
+        // Prologue: load first fragments (innerK = 0)
+        #pragma unroll
+        for (int m = 0; m < MMA_M_TILES; ++m) {
+            const __half *As_ptr = &As_tile[(warpM * WM + m * MMA_M) * A_STRIDE + 0];
+            wmma::load_matrix_sync(a_frag[frag_load][m], As_ptr, A_STRIDE);
+        }
+        #pragma unroll
+        for (int n = 0; n < MMA_N_TILES; ++n) {
+            const __half *Bs_ptr = &Bs_tile[0 * B_STRIDE + warpN * WN + n * MMA_N];
+            wmma::load_matrix_sync(b_frag[frag_load][n], Bs_ptr, B_STRIDE);
+        }
+
+        // Main inner loop with double buffering
         #pragma unroll
         for (int innerK = 0; innerK < BK; innerK += MMA_K) {
-            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
-                a_frag[MMA_M_TILES];
-            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
-                b_frag[MMA_N_TILES];
+            // Swap buffers
+            frag_load ^= 1;
+            frag_compute ^= 1;
 
+            // Load NEXT fragments (if not last iteration)
+            if (innerK + MMA_K < BK) {
+                #pragma unroll
+                for (int m = 0; m < MMA_M_TILES; ++m) {
+                    const __half *As_ptr = &As_tile[(warpM * WM + m * MMA_M) * A_STRIDE + innerK + MMA_K];
+                    wmma::load_matrix_sync(a_frag[frag_load][m], As_ptr, A_STRIDE);
+                }
+                #pragma unroll
+                for (int n = 0; n < MMA_N_TILES; ++n) {
+                    const __half *Bs_ptr = &Bs_tile[(innerK + MMA_K) * B_STRIDE + warpN * WN + n * MMA_N];
+                    wmma::load_matrix_sync(b_frag[frag_load][n], Bs_ptr, B_STRIDE);
+                }
+            }
+
+            // Compute with CURRENT fragments
             #pragma unroll
             for (int m = 0; m < MMA_M_TILES; ++m) {
-                const __half *As_ptr = &As_compute[(warpM * WM + m * MMA_M) * A_STRIDE + innerK];
-                wmma::load_matrix_sync(a_frag[m], As_ptr, A_STRIDE);
-            }
-
-            #pragma unroll
-            for (int n = 0; n < MMA_N_TILES; ++n) {
-                const __half *Bs_ptr = &Bs_compute[innerK * B_STRIDE + warpN * WN + n * MMA_N];
-                wmma::load_matrix_sync(b_frag[n], Bs_ptr, B_STRIDE);
-            }
-
-            #pragma unroll
-            for (int m = 0; m < MMA_M_TILES; ++m)
                 #pragma unroll
-                for (int n = 0; n < MMA_N_TILES; ++n)
-                    wmma::mma_sync(acc[m][n], a_frag[m], b_frag[n], acc[m][n]);
+                for (int n = 0; n < MMA_N_TILES; ++n) {
+                    wmma::mma_sync(acc[m][n], a_frag[frag_compute][m], b_frag[frag_compute][n], acc[m][n]);
+                }
+            }
         }
 
         __syncthreads();
@@ -139,8 +166,8 @@ __global__ void wmma_multistage_dynsmem(
         acc, C, N, alpha, beta, warpM, warpN);
 }
 
-template<int BM, int BN, int BK, int WM, int WN, int STAGES = 3>
-struct WMMAMultistageDynSmem {
+template<int BM, int BN, int BK, int WM, int WN, int STAGES = 2>
+struct WMMADynSmem {
     static constexpr int WARPS_M = BM / WM;
     static constexpr int WARPS_N = BN / WN;
     static constexpr int NUM_THREADS = WARPS_M * WARPS_N * 32;
@@ -154,11 +181,11 @@ struct WMMAMultistageDynSmem {
                     const __half* A, const __half* B,
                     __half beta, __half* C) {
         
-        // Configure max dynamic shared memory (safe to call multiple times)
+        // Configure max dynamic shared memory
         static bool configured = false;
         if (!configured) {
             cudaFuncSetAttribute(
-                wmma_multistage_dynsmem<BM, BN, BK, WM, WN, STAGES>,
+                wmma_dynsmem<BM, BN, BK, WM, WN, STAGES>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 SMEM_SIZE
             );
@@ -167,18 +194,16 @@ struct WMMAMultistageDynSmem {
 
         dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
         dim3 block(NUM_THREADS);
-        wmma_multistage_dynsmem<BM, BN, BK, WM, WN, STAGES><<<grid, block, SMEM_SIZE>>>(
+        wmma_dynsmem<BM, BN, BK, WM, WN, STAGES><<<grid, block, SMEM_SIZE>>>(
             M, N, K, alpha, A, B, beta, C);
     }
 
     static void PrintConfig() {
-        printf("WMMAMultistageDynSmem<%d, %d, %d, %d, %d, %d>\n", BM, BN, BK, WM, WN, STAGES);
+        printf("WMMADynSmem<%d, %d, %d, %d, %d, %d>\n", BM, BN, BK, WM, WN, STAGES);
         printf("  Block tile: %dx%dx%d\n", BM, BN, BK);
         printf("  Warp tile:  %dx%d\n", WM, WN);
         printf("  Stages:     %d\n", STAGES);
         printf("  Threads:    %d\n", NUM_THREADS);
-        printf("  A stride:   %d (padded)\n", A_STRIDE);
-        printf("  B stride:   %d (padded)\n", B_STRIDE);
-        printf("  Shared mem: %.2f KB\n", SMEM_SIZE / 1024.0f);
+        printf("  Shared mem: %.2f KB (dynamic)\n", SMEM_SIZE / 1024.0f);
     }
 };

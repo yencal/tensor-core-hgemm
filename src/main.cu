@@ -12,7 +12,7 @@
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
 #include "06_wmma_double_buffer.cuh"
-#include "06_wmma_multistage_dynsmem.cuh"
+#include "07_wmma_dynsmem.cuh"
 #include "autotune.cuh"
 
 int main(int argc, char** argv)
@@ -42,11 +42,11 @@ int main(int argc, char** argv)
     // printf("Autotuning 05_WMMAMultistage\n");
     // RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
 
-    printf("Autotuning 06_WMMADoubleBuffer\n");
-    RunAutotune<WMMADoubleBufferTag>(GetWMMAMultistageVariants<WMMADoubleBuffer>());
+    // printf("Autotuning 06_WMMADoubleBuffer\n");
+    // RunAutotune<WMMADoubleBufferTag>(GetWMMAMultistageVariants<WMMADoubleBuffer>());
 
-    // printf("Autotuning 06_WMMAMultistageDynSmem\n");
-    // RunAutotune<WMMAMultistageDynSmemTag>(GetWMMADynSmemVariants<WMMAMultistageDynSmem>());
+    printf("Autotuning 07_WMMADynSmem\n");
+    RunAutotune<WMMADynSmemTag>(GetWMMADynSmemVariants<WMMADynSmem>());
 
     for (int N : sizes) {
         int M = N, K = N;
@@ -100,11 +100,6 @@ int main(int argc, char** argv)
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
         results.push_back(RunBenchmark<WMMADoubleBuffer<128, 128, 32, 64, 64, 2>>(
             "06_WMMADoubleBuffer", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
-
-        // 06: WMMAMultistageDynSmem
-        CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
-        results.push_back(RunBenchmark<WMMAMultistageDynSmem<128, 128, 32, 64, 64, 2>>(
-            "06_WMMAMultistageDynSmem", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));
         CHECK_CUDA(cudaFree(d_B));

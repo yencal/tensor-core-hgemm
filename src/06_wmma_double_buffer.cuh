@@ -28,7 +28,7 @@ __global__ void wmma_double_buffer(
     constexpr int NUM_THREADS = WARPS_M * WARPS_N * 32;
 
     // Number of MMA iterations per BK tile
-    constexpr int K_ITERS = BK / MMA_K;
+    // constexpr int K_ITERS = BK / MMA_K;
 
     // Padded strides
     constexpr int SMEM_PAD = 8;

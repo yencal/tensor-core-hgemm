@@ -17,7 +17,7 @@
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
 #include "06_wmma_double_buffer.cuh"
-#include "06_wmma_multistage_dynsmem.cuh"
+#include "07_wmma_dynsmem.cuh"
 
 struct TuneConfig {
     const char* name;
@@ -30,7 +30,7 @@ struct WMMAAsyncTag {};
 struct WMMAPaddedTag {};
 struct WMMAMultistageTag {};
 struct WMMADoubleBufferTag {};
-struct WMMAMultistageDynSmemTag {};
+struct WMMADynSmemTag {};
 
 template<typename Tag>
 struct Autotuned {
