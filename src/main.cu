@@ -96,6 +96,11 @@ int main(int argc, char** argv)
         results.push_back(RunBenchmark<WMMAMultistage<128, 128, 32, 64, 64, 2>>(
             "05_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
+        // 06: WMMADoubleBuffer
+        CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<WMMADoubleBuffer<128, 128, 32, 64, 64, 2>>(
+            "06_WMMADoubleBuffer", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+
         // 06: WMMAMultistageDynSmem
         CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
         results.push_back(RunBenchmark<WMMAMultistageDynSmem<128, 128, 32, 64, 64, 2>>(
