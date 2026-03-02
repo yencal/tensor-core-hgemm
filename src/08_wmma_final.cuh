@@ -171,11 +171,13 @@ __global__ void wmma_final(
             }
 
             // Compute with CURRENT fragments
+            // NEW: Zig-zag order (better register reuse for B fragments)
             #pragma unroll
             for (int m = 0; m < MMA_M_TILES; ++m) {
                 #pragma unroll
                 for (int n = 0; n < MMA_N_TILES; ++n) {
-                    wmma::mma_sync(acc[m][n], a_frag[frag_compute][m], b_frag[frag_compute][n], acc[m][n]);
+                    int n_idx = (m % 2) ? (MMA_N_TILES - 1 - n) : n;  // Reverse on odd rows
+                    wmma::mma_sync(acc[m][n_idx], a_frag[frag_compute][m], b_frag[frag_compute][n_idx], acc[m][n_idx]);
                 }
             }
         }
