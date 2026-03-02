@@ -9,6 +9,7 @@
 #include <functional>
 #include <cfloat>
 #include <cstdio>
+#include <string>
 
 #include "utils.cuh"
 #include "01_wmma_block_tiling.cuh"
@@ -216,4 +217,19 @@ inline void RunAutotune(
     CHECK_CUDA(cudaFree(tune_A));
     CHECK_CUDA(cudaFree(tune_B));
     CHECK_CUDA(cudaFree(tune_C));
+}
+
+// Helper function: benchmark with autotuned config, label includes winning config name
+template<typename Tag>
+void RunAndRecordAutotuned(
+    std::vector<BenchmarkResult>& results,
+    const char* kernel_name,
+    int M, int N, int K,
+    __half alpha, const __half* A, const __half* B,
+    __half beta, __half* C, const __half* C_ref)
+{
+    CHECK_CUDA(cudaMemset(C, 0, M * N * sizeof(__half)));
+    std::string label = std::string(kernel_name) + " [" + Autotuned<Tag>::config.name + "]";
+    results.push_back(RunBenchmark<Autotuned<Tag>>(
+        label.c_str(), M, N, K, alpha, A, B, beta, C, C_ref));
 }
