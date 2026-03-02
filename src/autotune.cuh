@@ -25,7 +25,7 @@ struct TuneConfig {
 struct WMMABlockTilingTag {};
 struct WMMAVectorizedTag {};
 struct WMMAAsyncTag {};
-struct WMMAPadded {};
+struct WMMAPaddedTag {};
 struct WMMAMultistageTag {};
 
 template<typename Tag>

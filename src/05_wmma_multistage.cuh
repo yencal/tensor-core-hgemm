@@ -40,8 +40,8 @@ __global__ void wmma_multistage(
     static_assert((BK * BN) % NUM_THREADS == 0, "B tile must be evenly divisible among threads");
 
     // Padded shared memory
-    __shared__ __half As[BM * A_STRIDE];
-    __shared__ __half Bs[BK * B_STRIDE];
+    __shared__ __half As[STAGES][BM * A_STRIDE];
+    __shared__ __half Bs[STAGES][BK * B_STRIDE];
 
     const uint tid = threadIdx.x;
     const uint warpId = tid / 32;
