@@ -1,5 +1,8 @@
-// 04_multistage.cuh
+// 05_wmma_multistage.cuh
 // WMMA HGEMM with multi-stage async pipeline
+//
+// NOTE: B is in standard layout B[K,N] row-major.
+//       A uses stride BK+pad, B uses stride BN+pad for bank conflict avoidance.
 
 #pragma once
 
@@ -13,8 +16,8 @@ using namespace nvcuda;
 
 template <int BM, int BN, int BK, int WM, int WN, int STAGES>
 __global__ void wmma_multistage(
-    int M, int N, int K, __half alpha, 
-    const __half *A, const __half *B, __half beta, __half *C)
+    int M, int N, int K, __half alpha,
+    const __half *__restrict__ A, const __half *__restrict__ B, __half beta, __half *__restrict__ C)
 {
     constexpr int MMA_M = 16;
     constexpr int MMA_N = 16;
@@ -40,8 +43,12 @@ __global__ void wmma_multistage(
     static_assert((BK * BN) % NUM_THREADS == 0, "B tile must be evenly divisible among threads");
 
     // Padded shared memory
-    __shared__ __half As[STAGES][BM * A_STRIDE];
-    __shared__ __half Bs[STAGES][BK * B_STRIDE];
+    constexpr int A_STAGE_SIZE = BM * A_STRIDE;
+    constexpr int B_STAGE_SIZE = BK * B_STRIDE;
+
+    extern __shared__ __half smem[];
+    __half* As = smem;
+    __half* Bs = smem + STAGES * A_STAGE_SIZE;
 
     const uint tid = threadIdx.x;
     const uint warpId = tid / 32;
@@ -52,7 +59,7 @@ __global__ void wmma_multistage(
     B += blockIdx.x * BN;
     C += blockIdx.y * BM * N + blockIdx.x * BN;
 
-    wmma::fragment<wmma::accumulator, MMA_M, MMA_N, MMA_K, __half> 
+    wmma::fragment<wmma::accumulator, MMA_M, MMA_N, MMA_K, __half>
         acc[MMA_M_TILES][MMA_N_TILES];
 
     #pragma unroll
@@ -67,8 +74,10 @@ __global__ void wmma_multistage(
     const int prologueStages = min(STAGES - 1, numTiles);
     #pragma unroll
     for (int s = 0; s < prologueStages; ++s) {
-        loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + s * BK, As[s], K, tid);
-        loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B + s * BK * N, Bs[s], N, tid);
+        __half* As_stage = As + s * A_STAGE_SIZE;
+        __half* Bs_stage = Bs + s * B_STAGE_SIZE;
+        loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + s * BK, As_stage, K, tid);
+        loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B + s * BK * N, Bs_stage, N, tid);
         __pipeline_commit();
     }
 
@@ -81,33 +90,43 @@ __global__ void wmma_multistage(
         // --- Async load: prefetch future tile ---
         if (loadTile < numTiles) {
             int loadStage = loadTile % STAGES;
-            loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + loadTile * BK, As[loadStage], K, tid);
-            loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B + loadTile * BK * N, Bs[loadStage], N, tid);
+            __half* As_stage = As + loadStage * A_STAGE_SIZE;
+            __half* Bs_stage = Bs + loadStage * B_STAGE_SIZE;
+            loadTileA_async_padded<BM, BK, A_STRIDE, NUM_THREADS>(A + loadTile * BK, As_stage, K, tid);
+            loadTileB_async_padded<BK, BN, B_STRIDE, NUM_THREADS>(B + loadTile * BK * N, Bs_stage, N, tid);
             __pipeline_commit();
             ++loadTile;
         }
 
-        // Wait for compute stage (keeps STAGES-1 loads in flight)
-        __pipeline_wait_prior(STAGES - 1);
+        // Wait for compute stage data to be ready
+        if (loadTile < numTiles) {
+            __pipeline_wait_prior(STAGES - 1);
+        } else {
+            __pipeline_wait_prior(0);
+        }
         __syncthreads();
+
+        // Compute pointers for this stage
+        const __half* As_tile = As + computeStage * A_STAGE_SIZE;
+        const __half* Bs_tile = Bs + computeStage * B_STAGE_SIZE;
 
         // --- Compute: WMMA on current tile ---
         #pragma unroll
         for (int innerK = 0; innerK < BK; innerK += MMA_K) {
-            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
+            wmma::fragment<wmma::matrix_a, MMA_M, MMA_N, MMA_K, __half, wmma::row_major>
                 a_frag[MMA_M_TILES];
-            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, __half, wmma::row_major> 
+            wmma::fragment<wmma::matrix_b, MMA_M, MMA_N, MMA_K, __half, wmma::row_major>
                 b_frag[MMA_N_TILES];
 
             #pragma unroll
             for (int m = 0; m < MMA_M_TILES; ++m) {
-                const __half *As_ptr = &As[computeStage][(warpM * WM + m * MMA_M) * A_STRIDE + innerK];
+                const __half *As_ptr = &As_tile[(warpM * WM + m * MMA_M) * A_STRIDE + innerK];
                 wmma::load_matrix_sync(a_frag[m], As_ptr, A_STRIDE);
             }
 
             #pragma unroll
             for (int n = 0; n < MMA_N_TILES; ++n) {
-                const __half *Bs_ptr = &Bs[computeStage][innerK * B_STRIDE + warpN * WN + n * MMA_N];
+                const __half *Bs_ptr = &Bs_tile[innerK * B_STRIDE + warpN * WN + n * MMA_N];
                 wmma::load_matrix_sync(b_frag[n], Bs_ptr, B_STRIDE);
             }
 
@@ -131,12 +150,26 @@ struct WMMAMultistage {
     static constexpr int WARPS_N = BN / WN;
     static constexpr int NUM_THREADS = WARPS_M * WARPS_N * 32;
 
+    static constexpr int SMEM_PAD = 8;
+    static constexpr int A_STRIDE = BK + SMEM_PAD;
+    static constexpr int B_STRIDE = BN + SMEM_PAD;
+    static constexpr size_t SMEM_SIZE = STAGES * (BM * A_STRIDE + BK * B_STRIDE) * sizeof(__half);
+
     static void Run(int M, int N, int K, __half alpha,
                     const __half* A, const __half* B,
                     __half beta, __half* C) {
+        static bool configured = false;
+        if (!configured) {
+            cudaFuncSetAttribute(
+                wmma_multistage<BM, BN, BK, WM, WN, STAGES>,
+                cudaFuncAttributeMaxDynamicSharedMemorySize,
+                SMEM_SIZE
+            );
+            configured = true;
+        }
         dim3 grid((N + BN - 1) / BN, (M + BM - 1) / BM);
         dim3 block(NUM_THREADS);
-        wmma_multistage<BM, BN, BK, WM, WN, STAGES><<<grid, block>>>(
+        wmma_multistage<BM, BN, BK, WM, WN, STAGES><<<grid, block, SMEM_SIZE>>>(
             M, N, K, alpha, A, B, beta, C);
     }
 
@@ -146,6 +179,6 @@ struct WMMAMultistage {
         printf("  Warp tile:  %dx%d\n", WM, WN);
         printf("  Stages:     %d\n", STAGES);
         printf("  Threads:    %d\n", NUM_THREADS);
+        printf("  Shared mem: %.2f KB\n", SMEM_SIZE / 1024.0f);
     }
-
 };

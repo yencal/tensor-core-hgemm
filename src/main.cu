@@ -1,5 +1,7 @@
 // main.cu
 // Benchmark runner for HGEMM implementations (FP16)
+//
+// NOTE: All kernels expect B in standard layout B[K,N] row-major.
 
 #include <iostream>
 #include <vector>
@@ -12,8 +14,7 @@
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
 #include "06_wmma_double_buffer.cuh"
-#include "07_wmma_dynsmem.cuh"
-#include "08_wmma_final.cuh"
+#include "07_wmma_final.cuh"
 #include "autotune.cuh"
 
 int main(int argc, char** argv)
@@ -28,42 +29,7 @@ int main(int argc, char** argv)
     CHECK_CUBLAS(cublasCreate(&handle));
 
     // ========================================
-    // Autotune all kernels upfront
-    // ========================================
-    printf("============================================================\n");
-    printf("Autotuning all kernels ...\n");
-    printf("============================================================\n\n");
-
-    printf("Autotuning 01_WMMABlockTiling\n");
-    RunAutotune<WMMABlockTilingTag>(GetWMMAVariants<WMMABlockTiling>());
-
-    printf("Autotuning 02_WMMAVectorized\n");
-    RunAutotune<WMMAVectorizedTag>(GetWMMAVectorizedVariants<WMMAVectorized>());
-
-    printf("Autotuning 03_WMMAAsync\n");
-    RunAutotune<WMMAAsyncTag>(GetWMMAVectorizedVariants<WMMAAsync>());
-
-    printf("Autotuning 04_WMMAPadded\n");
-    RunAutotune<WMMAPaddedTag>(GetWMMAVectorizedVariants<WMMAPadded>());
-
-    printf("Autotuning 05_WMMAMultistage\n");
-    RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>());
-
-    printf("Autotuning 06_WMMADoubleBuffer\n");
-    RunAutotune<WMMADoubleBufferTag>(GetWMMAMultistageVariants<WMMADoubleBuffer>());
-
-    printf("Autotuning 07_WMMADynSmem\n");
-    RunAutotune<WMMADynSmemTag>(GetWMMADynSmemVariants<WMMADynSmem>());
-
-    printf("Autotuning 08_WMMAFinal\n");
-    RunAutotune<WMMAFinalTag>(GetWMMAFinalVariants<WMMAFinal>());
-
-    printf("============================================================\n");
-    printf("Autotuning complete. Running benchmarks...\n");
-    printf("============================================================\n");
-
-    // ========================================
-    // Benchmark loop
+    // Benchmark loop - autotune all kernels per size
     // ========================================
     for (int N : sizes) {
         int M = N, K = N;
@@ -73,13 +39,13 @@ int main(int argc, char** argv)
         std::cout << "========================================" << std::endl;
 
         __half *d_A, *d_B, *d_C, *d_C_ref;
-        CHECK_CUDA(cudaMalloc(&d_A, M * K * sizeof(__half)));
-        CHECK_CUDA(cudaMalloc(&d_B, K * N * sizeof(__half)));
-        CHECK_CUDA(cudaMalloc(&d_C, M * N * sizeof(__half)));
-        CHECK_CUDA(cudaMalloc(&d_C_ref, M * N * sizeof(__half)));
+        CHECK_CUDA(cudaMalloc(&d_A, (size_t)M * K * sizeof(__half)));
+        CHECK_CUDA(cudaMalloc(&d_B, (size_t)K * N * sizeof(__half)));
+        CHECK_CUDA(cudaMalloc(&d_C, (size_t)M * N * sizeof(__half)));
+        CHECK_CUDA(cudaMalloc(&d_C_ref, (size_t)M * N * sizeof(__half)));
 
-        FillRandomDevice(d_A, M * K);
-        FillRandomDevice(d_B, K * N);
+        FillRandomDevice(d_A, (size_t)M * K);
+        FillRandomDevice(d_B, (size_t)K * N);
 
         // Generate reference
         HGEMMCuBLAS::Run(handle, M, N, K, alpha, d_A, d_B, beta, d_C_ref);
@@ -89,33 +55,54 @@ int main(int argc, char** argv)
         results.push_back(RunCuBLASBenchmark<HGEMMCuBLAS>(
             "00_cuBLAS", handle, M, N, K, alpha, d_A, d_B, beta, d_C));
 
-        // 01-07: Autotuned kernels (tuned once at start)
-        RunAndRecordAutotuned<WMMABlockTilingTag>(
-            results, "01_WMMABlockTiling", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
+        // 01: WMMABlockTiling
+        printf("\nAutotuning 01_WMMABlockTiling for N=%d\n", N);
+        RunAutotune<WMMABlockTilingTag>(GetWMMAVariants<WMMABlockTiling>(), N);
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<Autotuned<WMMABlockTilingTag>>(
+            "01_WMMABlockTiling", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        RunAndRecordAutotuned<WMMAVectorizedTag>(
-            results, "02_WMMAVectorized", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
+        // 02: WMMAVectorized
+        printf("\nAutotuning 02_WMMAVectorized for N=%d\n", N);
+        RunAutotune<WMMAVectorizedTag>(GetWMMAVectorizedVariants<WMMAVectorized>(), N);
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<Autotuned<WMMAVectorizedTag>>(
+            "02_WMMAVectorized", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        RunAndRecordAutotuned<WMMAAsyncTag>(
-            results, "03_WMMAAsync", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
+        // 03: WMMAAsync
+        printf("\nAutotuning 03_WMMAAsync for N=%d\n", N);
+        RunAutotune<WMMAAsyncTag>(GetWMMAVectorizedVariants<WMMAAsync>(), N);
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<Autotuned<WMMAAsyncTag>>(
+            "03_WMMAAsync", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        RunAndRecordAutotuned<WMMAPaddedTag>(
-            results, "04_WMMAPadded", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
+        // 04: WMMAPadded
+        printf("\nAutotuning 04_WMMAPadded for N=%d\n", N);
+        RunAutotune<WMMAPaddedTag>(GetWMMAVectorizedVariants<WMMAPadded>(), N);
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<Autotuned<WMMAPaddedTag>>(
+            "04_WMMAPadded", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        RunAndRecordAutotuned<WMMAMultistageTag>(
-            results, "05_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
+        // 05: WMMAMultistage
+        printf("\nAutotuning 05_WMMAMultistage for N=%d\n", N);
+        RunAutotune<WMMAMultistageTag>(GetWMMAMultistageVariants<WMMAMultistage>(), N);
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<Autotuned<WMMAMultistageTag>>(
+            "05_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        RunAndRecordAutotuned<WMMADoubleBufferTag>(
-            results, "06_WMMADoubleBuffer", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
+        // 06: WMMADoubleBuffer
+        printf("\nAutotuning 06_WMMADoubleBuffer for N=%d\n", N);
+        RunAutotune<WMMADoubleBufferTag>(GetWMMAMultistageVariants<WMMADoubleBuffer>(), N);
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
+        results.push_back(RunBenchmark<Autotuned<WMMADoubleBufferTag>>(
+            "06_WMMADoubleBuffer", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        RunAndRecordAutotuned<WMMADynSmemTag>(
-            results, "07_WMMADynSmem", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref);
-
-        // 08: WMMAFinal - autotuned per size, FIXED label for plotting
+        // 07: WMMAFinal
+        printf("\nAutotuning 07_WMMAFinal for N=%d\n", N);
         RunAutotune<WMMAFinalTag>(GetWMMAFinalVariants<WMMAFinal>(), N);
-        CHECK_CUDA(cudaMemset(d_C, 0, M * N * sizeof(__half)));
+        CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
         results.push_back(RunBenchmark<Autotuned<WMMAFinalTag>>(
-            "08_WMMAFinal", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+            "07_WMMAFinal", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         CHECK_CUDA(cudaFree(d_A));
         CHECK_CUDA(cudaFree(d_B));

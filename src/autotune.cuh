@@ -18,8 +18,7 @@
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
 #include "06_wmma_double_buffer.cuh"
-#include "07_wmma_dynsmem.cuh"
-#include "08_wmma_final.cuh"
+#include "07_wmma_final.cuh"
 
 struct TuneConfig {
     const char* name;
@@ -32,7 +31,6 @@ struct WMMAAsyncTag {};
 struct WMMAPaddedTag {};
 struct WMMAMultistageTag {};
 struct WMMADoubleBufferTag {};
-struct WMMADynSmemTag {};
 struct WMMAFinalTag {};
 
 template<typename Tag>
@@ -53,96 +51,105 @@ struct Autotuned {
     TuneConfig{#BM "x" #BN "x" #BK "_" #WM "x" #WN "_S" #STAGES, \
                Kernel<BM, BN, BK, WM, WN, STAGES>::Run}
 
-// For WMMAFinal with swizzle options
-#define TUNE_CONFIG_FINAL(Kernel, BM, BN, BK, WM, WN, STAGES, USE_SWIZZLE, GROUP_SIZE_M) \
+#define TUNE_CONFIG_FINAL(Kernel, BM, BN, BK, WM, WN, STAGES, USE_SWIZZLE, BLOCK_STRIDE) \
     TuneConfig{#BM "x" #BN "x" #BK "_" #WM "x" #WN "_S" #STAGES \
-               "_sw" #USE_SWIZZLE "_g" #GROUP_SIZE_M, \
-               Kernel<BM, BN, BK, WM, WN, STAGES, USE_SWIZZLE, GROUP_SIZE_M>::Run}
+               "_sw" #USE_SWIZZLE "_bs" #BLOCK_STRIDE, \
+               Kernel<BM, BN, BK, WM, WN, STAGES, USE_SWIZZLE, BLOCK_STRIDE>::Run}
 
+// =========================================================================
+// Kernel 01: Block tiling (scalar loads)
+// Small tiles since scalar loads are the bottleneck
+// =========================================================================
 template<template<int, int, int, int, int> class Kernel>
 inline std::vector<TuneConfig> GetWMMAVariants() {
     return {
-        // BK must be multiple of 16 (MMA_K)
-        TUNE_CONFIG(Kernel, 64,  64,  16, 16, 16),
-        TUNE_CONFIG(Kernel, 64,  64,  32, 16, 16),
-        TUNE_CONFIG(Kernel, 64,  128, 16, 16, 32),
-        TUNE_CONFIG(Kernel, 128, 64,  16, 32, 16),
-        TUNE_CONFIG(Kernel, 128, 128, 16, 32, 32),
-        TUNE_CONFIG(Kernel, 128, 128, 32, 32, 32),
-        TUNE_CONFIG(Kernel, 128, 128, 64, 32, 32),
-        TUNE_CONFIG(Kernel, 64,  128, 32, 32, 32),
+        TUNE_CONFIG(Kernel, 64,  64,  16, 16, 16),   // 128 threads
+        TUNE_CONFIG(Kernel, 64,  64,  32, 16, 16),   // 128 threads
+        TUNE_CONFIG(Kernel, 128, 64,  16, 32, 16),   // 256 threads
+        TUNE_CONFIG(Kernel, 64,  128, 16, 16, 32),   // 256 threads
+        TUNE_CONFIG(Kernel, 128, 128, 16, 32, 32),   // 512 threads
+        TUNE_CONFIG(Kernel, 128, 128, 32, 32, 32),   // 512 threads
     };
 }
 
-// For vectorized kernel: need (BM*BK)/8 >= NUM_THREADS and divisible
+// =========================================================================
+// Kernels 02-04: Vectorized / Async / Padded
+// Need BK % 8 == 0 for float4 loads
+// =========================================================================
 template<template<int, int, int, int, int> class Kernel>
 inline std::vector<TuneConfig> GetWMMAVectorizedVariants() {
     return {
-        // These all satisfy: (BM*BK)/8 % NUM_THREADS == 0
-        TUNE_CONFIG(Kernel, 128, 128, 32, 32, 32),  // 512 threads, 512 vecs
-        TUNE_CONFIG(Kernel, 128, 128, 64, 32, 32),  // 512 threads, 1024 vecs
-        TUNE_CONFIG(Kernel, 128, 256, 32, 32, 64),  // 512 threads, 512 vecs
-        TUNE_CONFIG(Kernel, 256, 128, 32, 64, 32),  // 512 threads, 1024 vecs
-        TUNE_CONFIG(Kernel, 128, 128, 32, 64, 64),  // 128 threads, 512 vecs
-        TUNE_CONFIG(Kernel, 64,  128, 64, 32, 32),  // 256 threads, 512 vecs
-        TUNE_CONFIG(Kernel, 128, 64,  64, 32, 32),  // 256 threads, 1024 vecs
+        // 128 threads (large warp tiles, fewer warps)
+        TUNE_CONFIG(Kernel, 128, 128, 32, 64, 64),   // 128 threads, 4 MMA tiles/warp
+        // 256 threads
+        TUNE_CONFIG(Kernel, 256, 128, 32, 64, 32),   // 256 threads
+        TUNE_CONFIG(Kernel, 128, 256, 32, 32, 64),   // 256 threads
+        // 512 threads (small warp tiles, more warps)
+        TUNE_CONFIG(Kernel, 128, 128, 32, 32, 32),   // 512 threads
+        TUNE_CONFIG(Kernel, 128, 128, 64, 32, 32),   // 512 threads
+        TUNE_CONFIG(Kernel, 256, 128, 32, 64, 64),   // 256 threads
     };
 }
 
-// For multistage
+// =========================================================================
+// Kernels 05-06: Multistage / Double buffer
+// Stages parameter controls pipeline depth vs smem usage
+// =========================================================================
 template<template<int, int, int, int, int, int> class Kernel>
 inline std::vector<TuneConfig> GetWMMAMultistageVariants() {
     return {
-        // sm_80 (A100): 48KB shared mem, STAGES * BK <= 96
-        // 2-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 2), 
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 2), 
-        // 3-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 64, 32, 64, 32, 3),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 64, 128, 32, 32, 64, 3),
-        // 4-stage
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 16, 64, 64, 4),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 64, 64, 32, 32, 32, 4),
-    };  
-}
-
-template<template<int, int, int, int, int, int> class Kernel>
-inline std::vector<TuneConfig> GetWMMADynSmemVariants() {
-    return {
+        // BK=32, 128 threads
         TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 2),
         TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 3),
-        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 64, 64, 4),
+        // BK=32, 256 threads
+        TUNE_CONFIG_MULTISTAGE(Kernel, 256, 128, 32, 64, 64, 2),
         TUNE_CONFIG_MULTISTAGE(Kernel, 256, 128, 32, 64, 64, 3),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 256, 128, 32, 64, 32, 3),
+        // BK=32, 512 threads
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 2),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 32, 32, 32, 3),
+        // BK=64
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 64, 32, 32, 2),
+        TUNE_CONFIG_MULTISTAGE(Kernel, 128, 128, 64, 64, 64, 2),
     };
 }
 
-// For WMMAFinal with swizzle variants
+// =========================================================================
+// Kernel 07: Final (interleaved load/compute)
+// BK must be 32, stages 3 preferred (proven by ablation)
+// =========================================================================
 template<template<int, int, int, int, int, int, bool, int> class Kernel>
 inline std::vector<TuneConfig> GetWMMAFinalVariants() {
     return {
-        // No swizzle (best for large L2 like H200)
-        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 2, false, 8),
-        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 3, false, 8),
-        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 64, 3, false, 8),
-        
-        // With swizzle, GROUP_SIZE_M=8
-        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 2, true, 8),
-        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 3, true, 8),
-        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 64, 3, true, 8),
-        
-        // With swizzle, GROUP_SIZE_M=16
-        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 2, true, 16),
-        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 3, true, 16),
-        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 64, 3, true, 16),
+        // 256 threads, 3 stages (the proven config)
+        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 64, 3, false, 16),
+        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 64, 3, true,  16),
+        // 128 threads
+        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 3, false, 16),
+        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 3, true,  16),
+        // Wider N tile
+        TUNE_CONFIG_FINAL(Kernel, 128, 256, 32, 64, 64, 3, true,  16),
+        // 512 threads (smaller warp tiles)
+        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 32, 3, true,  16),
+        // 2 stages (less smem, potentially higher occupancy)
+        TUNE_CONFIG_FINAL(Kernel, 256, 128, 32, 64, 64, 2, true,  16),
+        TUNE_CONFIG_FINAL(Kernel, 128, 128, 32, 64, 64, 2, true,  16),
+        // BK=64 (4 inner k-steps, larger tiles in K)
+        TUNE_CONFIG_FINAL(Kernel, 256, 128, 64, 64, 64, 2, true,  16),
+        TUNE_CONFIG_FINAL(Kernel, 128, 128, 64, 64, 64, 3, true,  16),
     };
 }
+
+// =========================================================================
+// Autotune engine
+// =========================================================================
 
 inline TuneConfig Autotune(
     const std::vector<TuneConfig>& variants,
     int M, int N, int K, __half alpha,
     const __half* A, const __half* B,
     __half beta, __half* C,
-    int warmup = 2, int iters = 10)
+    int warmup = 5, int iters = 10)
 {
     float best_time = FLT_MAX;
     TuneConfig best = variants[0];
@@ -158,7 +165,7 @@ inline TuneConfig Autotune(
 
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess) {
-            printf("  %-36s SKIP (%s)\n", config.name, cudaGetErrorString(err));
+            printf("  %-40s SKIP (%s)\n", config.name, cudaGetErrorString(err));
             continue;
         }
 
@@ -178,7 +185,7 @@ inline TuneConfig Autotune(
         ms /= iters;
 
         double tflops = (2.0 * M * N * K) / (ms * 1e9);
-        printf("  %-36s %7.3f ms  %6.2f TFLOPS\n", config.name, ms, tflops);
+        printf("  %-40s %7.3f ms  %6.2f TFLOPS\n", config.name, ms, tflops);
 
         if (ms < best_time) {
             best_time = ms;
@@ -199,7 +206,7 @@ inline TuneConfig Autotune(
 template<typename Tag>
 inline void RunAutotune(
     const std::vector<TuneConfig>& variants,
-    int tuneN = 4096,
+    int tuneN = 8192,
     __half alpha = __float2half(1.0f),
     __half beta = __float2half(0.0f))
 {
@@ -219,7 +226,6 @@ inline void RunAutotune(
     CHECK_CUDA(cudaFree(tune_C));
 }
 
-// Helper function: benchmark with autotuned config, label includes winning config name
 template<typename Tag>
 void RunAndRecordAutotuned(
     std::vector<BenchmarkResult>& results,
@@ -228,8 +234,7 @@ void RunAndRecordAutotuned(
     __half alpha, const __half* A, const __half* B,
     __half beta, __half* C, const __half* C_ref)
 {
-    CHECK_CUDA(cudaMemset(C, 0, M * N * sizeof(__half)));
-    // std::string label = std::string(kernel_name) + " [" + Autotuned<Tag>::config.name + "]";
+    CHECK_CUDA(cudaMemset(C, 0, (size_t)M * N * sizeof(__half)));
     std::string label = std::string(kernel_name);
     results.push_back(RunBenchmark<Autotuned<Tag>>(
         label.c_str(), M, N, K, alpha, A, B, beta, C, C_ref));

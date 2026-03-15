@@ -1,5 +1,7 @@
 // 00_cublas.cuh
 // cuBLAS wrapper for HGEMM benchmarking (FP16)
+//
+// NOTE: B is in standard layout B[K,N] row-major.
 
 #pragma once
 
@@ -11,7 +13,8 @@ struct HGEMMCuBLAS {
     static void Run(cublasHandle_t handle, int M, int N, int K, __half alpha,
                     const __half* A, const __half* B,
                     __half beta, __half* C) {
-        // Row-major: C = A*B becomes C^T = B^T * A^T in column-major
+        // A is [M,K] row-major, B is [K,N] row-major
+        // Row-major C = A * B becomes column-major C^T = B^T * A^T
         cublasGemmEx(handle,
                     CUBLAS_OP_N, CUBLAS_OP_N,
                     N, M, K,
