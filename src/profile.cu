@@ -16,7 +16,7 @@
 #include "03_wmma_async_copy.cuh"
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
-#include "06_wmma_double_buffer.cuh"
+#include "06_wmma_pipelining.cuh"
 #include "07_wmma_final.cuh"
 
 int main(int argc, char** argv) {
@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
         printf("  3  = WMMAAsync\n");
         printf("  4  = WMMAPadded\n");
         printf("  5  = WMMAMultistage\n");
-        printf("  6  = WMMADoubleBuffer\n");
+        printf("  6  = WMMAPipelining\n");
         printf("  7  = WMMAFinal\n");
         return 1;
     }
@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     else if (strcmp(kernel, "5") == 0)
         WMMAMultistage<128,128,32, 32,32, 2>::Run(M,N,K, alpha, d_A, d_B, beta, d_C);
     else if (strcmp(kernel, "6") == 0)
-        WMMADoubleBuffer<256,128,32, 64,64, 3>::Run(M,N,K, alpha, d_A, d_B, beta, d_C);
+        WMMAPipelining<256,128,32, 64,64, 3>::Run(M,N,K, alpha, d_A, d_B, beta, d_C);
     else if (strcmp(kernel, "7") == 0)
         WMMAFinal<256,128,32, 64,64, 3, true>::Run(M,N,K, alpha, d_A, d_B, beta, d_C);
     else { printf("Unknown kernel: %s\n", kernel); return 1; }

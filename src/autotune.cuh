@@ -17,7 +17,7 @@
 #include "03_wmma_async_copy.cuh"
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
-#include "06_wmma_double_buffer.cuh"
+#include "06_wmma_pipelining.cuh"
 #include "07_wmma_final.cuh"
 
 struct TuneConfig {
@@ -30,7 +30,7 @@ struct WMMAVectorizedTag {};
 struct WMMAAsyncTag {};
 struct WMMAPaddedTag {};
 struct WMMAMultistageTag {};
-struct WMMADoubleBufferTag {};
+struct WMMAPipeliningTag {};
 struct WMMAFinalTag {};
 
 template<typename Tag>
@@ -92,7 +92,7 @@ inline std::vector<TuneConfig> GetWMMAVectorizedVariants() {
 }
 
 // =========================================================================
-// Kernels 05-06: Multistage / Double buffer
+// Kernels 05-06: Multistage / Pipelining
 // Stages parameter controls pipeline depth vs smem usage
 // =========================================================================
 template<template<int, int, int, int, int, int> class Kernel>

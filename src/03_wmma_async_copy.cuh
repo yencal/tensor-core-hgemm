@@ -1,5 +1,5 @@
 // 03_wmma_async_copy.cuh
-// WMMA HGEMM with async copy (cp.async)
+// WMMA HGEMM with cp.async replacing explicit GMEM->SMEM loads
 //
 // NOTE: B is in standard layout B[K,N] row-major.
 

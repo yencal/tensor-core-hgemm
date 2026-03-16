@@ -1,8 +1,5 @@
 // 02_wmma_vectorized.cuh
-// WMMA HGEMM with shared memory block tiling
-// Each threadblock computes a BM×BN tile of output
-// Each warp computes a WM×WN tile using tensor cores (FP16)
-// Vectorized load from GMEM to SMEM (float4 = 8 halves)
+// WMMA HGEMM with vectorized GMEM->SMEM loads (float4 = 8 halves)
 //
 // NOTE: B is in standard layout B[K,N] row-major.
 

@@ -13,7 +13,7 @@
 #include "03_wmma_async_copy.cuh"
 #include "04_wmma_padded.cuh"
 #include "05_wmma_multistage.cuh"
-#include "06_wmma_double_buffer.cuh"
+#include "06_wmma_pipelining.cuh"
 #include "07_wmma_final.cuh"
 #include "autotune.cuh"
 
@@ -90,12 +90,12 @@ int main(int argc, char** argv)
         results.push_back(RunBenchmark<Autotuned<WMMAMultistageTag>>(
             "05_WMMAMultistage", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
-        // 06: WMMADoubleBuffer
-        printf("\nAutotuning 06_WMMADoubleBuffer for N=%d\n", N);
-        RunAutotune<WMMADoubleBufferTag>(GetWMMAMultistageVariants<WMMADoubleBuffer>(), N);
+        // 06: WMMAPipelining
+        printf("\nAutotuning 06_WMMAPipelining for N=%d\n", N);
+        RunAutotune<WMMAPipeliningTag>(GetWMMAMultistageVariants<WMMAPipelining>(), N);
         CHECK_CUDA(cudaMemset(d_C, 0, (size_t)M * N * sizeof(__half)));
-        results.push_back(RunBenchmark<Autotuned<WMMADoubleBufferTag>>(
-            "06_WMMADoubleBuffer", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
+        results.push_back(RunBenchmark<Autotuned<WMMAPipeliningTag>>(
+            "06_WMMAPipelining", M, N, K, alpha, d_A, d_B, beta, d_C, d_C_ref));
 
         // 07: WMMAFinal
         printf("\nAutotuning 07_WMMAFinal for N=%d\n", N);

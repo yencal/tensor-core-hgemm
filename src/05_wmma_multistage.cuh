@@ -1,5 +1,5 @@
 // 05_wmma_multistage.cuh
-// WMMA HGEMM with multi-stage async pipeline
+// WMMA HGEMM with multi-stage async pipeline (GMEM->SMEM overlap across tiles)
 //
 // NOTE: B is in standard layout B[K,N] row-major.
 //       A uses stride BK+pad, B uses stride BN+pad for bank conflict avoidance.
