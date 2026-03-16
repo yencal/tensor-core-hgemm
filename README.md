@@ -27,30 +27,28 @@ python3 scripts/plot_results.py hgemm_results.csv
 | 02_WMMAVectorized | + Vectorized global memory loads (float4) |
 | 03_WMMAAsync | + Asynchronous GMEM→SMEM copies (cp.async) |
 | 04_WMMAPadded | + Shared memory padding for bank conflict reduction |
-| 05_WMMAMultistage | + Multi-stage pipeline (overlapped loads/compute) |
-| 06_WMMADoubleBuffer | + Fragment double buffering |
-| 07_WMMADynSmem | + Dynamic shared memory for larger tiles |
-| 08_WMMAFinal | + Zig-zag MMA order, block swizzling, autotuning |
+| 05_WMMAMultistage | + Multi-stage async pipeline (overlapped tile loads) |
+| 06_WMMAPipelining | + Fragment double buffering, interleaved load/compute |
+| 07_WMMAFinal | + Block swizzling, vectorized epilogue, autotuning |
 
 ## Results
 
 **NVIDIA A100-SXM4 (40 GB)**
 
-The final kernel achieves **72% of cuBLAS** performance (196 vs 272 TFLOPS at N=4096).
+The final kernel achieves **80% of cuBLAS** performance (219 vs 274 TFLOPS at N=4096).
 
 ![HGEMM Performance](figures/wmma_hgemm_plot_a100.png)
 
 | Kernel | N=4096 Time | TFLOPS | % cuBLAS |
 |--------|-------------|--------|----------|
-| cuBLAS (FP16) | 0.51 ms | 272.1 | 100% |
-| 01_WMMABlockTiling | 3.23 ms | 42.6 | 16% |
-| 02_WMMAVectorized | 1.85 ms | 74.3 | 27% |
-| 03_WMMAAsync | 1.66 ms | 82.6 | 30% |
-| 04_WMMAPadded | 0.89 ms | 154.5 | 57% |
-| 05_WMMAMultistage | 0.73 ms | 189.0 | 69% |
-| 06_WMMADoubleBuffer | 0.72 ms | 189.8 | 70% |
-| 07_WMMADynSmem | 0.74 ms | 186.8 | 69% |
-| 08_WMMAFinal | 0.70 ms | 195.7 | **72%** |
+| cuBLAS (FP16) | 0.50 ms | 274 | 100% |
+| 01_WMMABlockTiling | 3.27 ms | 42 | 15% |
+| 02_WMMAVectorized | 1.85 ms | 74 | 27% |
+| 03_WMMAAsync | 1.68 ms | 82 | 30% |
+| 04_WMMAPadded | 0.88 ms | 156 | 57% |
+| 05_WMMAMultistage | 0.71 ms | 193 | 71% |
+| 06_WMMAPipelining | 0.68 ms | 203 | 74% |
+| 07_WMMAFinal | 0.63 ms | 219 | **80%** |
 
 ## Blog Post
 
